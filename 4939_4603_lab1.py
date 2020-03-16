@@ -1,18 +1,17 @@
 import sys
 import os
 import enum
+import socket
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # intializing a UDP socket
 
 
 def setup_sockets(address, packet):
-    import socket
-
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # intializing a UDP socket
     client_socket.sendto(packet, address)
     print("[CLIENT] Done!")
-    data, server = client_socket.recvfrom(600)
+    data, server = client_socket.recvfrom(4096)
     print("[CLIENT] in!")
-    print(server)
     return list(data), server
+
 
 
 
@@ -90,11 +89,13 @@ class TftpProcessor(object):
         DATA_packet=bytearray()
         DATA_packet.append(0)
         DATA_packet.append(3)
-        DATA_packet.append(0)
-        DATA_packet.append(DATA_no)
+        pstr= format(DATA_no,'b')
+        while len(pstr) < 16:
+            pstr = '0'+pstr
+        DATA_packet.append(int(pstr[0:8],2))
+        DATA_packet.append(int(pstr[8:16],2))
         DATA_packet += bytes(input_packet)
         return DATA_packet
-        pass
 
     def get_next_output_packet(self):
         """
@@ -114,7 +115,7 @@ class TftpProcessor(object):
         """
         return len(self.packet_buffer) != 0
 
-    def request_file(self, file_path_on_server):
+    def request_file(self, file_path_on_server,pack,block1,block2):
         """
         This method is only valid if you're implementing
         a TFTP client, since the client requests or uploads
@@ -122,7 +123,31 @@ class TftpProcessor(object):
         accept is the file name. Remove this function if you're
         implementing a server.
         """
-        pass
+        if pack == 1:
+            mode = "octet"
+            file = file_path_on_server.encode(encoding='UTF-8', errors='strict')
+            RRQ_packet = bytearray()
+            RRQ_packet.append(0)
+            RRQ_packet.append(1)
+            RRQ_packet += bytes(file)
+            RRQ_packet.append(0)
+            mod = mode.encode(encoding='UTF-8', errors='strict')
+            RRQ_packet += bytes(mod)
+            RRQ_packet.append(0)
+            return RRQ_packet
+        elif pack==2:
+            ACK_packet=bytearray()
+            ACK_packet.append(0)
+            ACK_packet.append(4)
+            ACK_packet.append(block1)
+            ACK_packet.append(block2)
+            return ACK_packet
+
+
+
+
+
+
 
     def upload_file(self,file_path_on_server):
         """
@@ -162,29 +187,58 @@ def check_file_name():
 def parse_user_input(address, operation, file_name=None):
     DATA_no=1
     if operation == "push":
+        print(f"Attempting to upload [{file_name}]...")
         WRQ_packet=OBJ.upload_file(file_path_on_server=file_name)
         op_code,server=setup_sockets((address, 69),WRQ_packet)
         pack_no=OBJ._parse_udp_packet(packet_bytes=op_code)
-        print(f"Attempting to upload [{file_name}]...")
         if(pack_no==4):
-            with open(file_name, "r") as f:
-              while True:
-                  chunk = bytearray(f.read(512).encode(encoding='UTF-8', errors='strict'))
-                  DATA_packet= OBJ._do_some_logic(DATA_no,chunk)
-                  print(list(DATA_packet))
-                  op_code,server = setup_sockets(server, DATA_packet)
-                  pack_no = OBJ._parse_udp_packet(packet_bytes=op_code)
-                  if not pack_no == 4:
-                        print("ERROR")
-                        break
-                  DATA_no=DATA_no+1
-                  if not chunk:
-                      break
-
-        pass
+            try :
+                with open(file_name, "rb") as f:
+                  while True:
+                      chunk = f.read(512)
+                      DATA_packet= OBJ._do_some_logic(DATA_no,chunk)
+                      print(list(DATA_packet))
+                      op_code,server = setup_sockets(server, DATA_packet)
+                      pack_no = OBJ._parse_udp_packet(packet_bytes=op_code)
+                      if (len(chunk) < 512):
+                          break
+                      if not pack_no == 4:
+                            print("ERROR")
+                            break
+                      DATA_no=DATA_no+1
+                      if not chunk:
+                          break
+            except FileNotFoundError:
+                print("File NOT found")
+        else:
+            print("Else Error")
     elif operation == "pull":
         print(f"Attempting to download [{file_name}]...")
-        pass
+        RRQ_packet=OBJ.request_file(file_path_on_server=file_name,pack=1,block1=None,block2=None)
+        op_code,server=setup_sockets((address, 69),RRQ_packet)
+        pack_no=OBJ._parse_udp_packet(packet_bytes=op_code)
+        if(pack_no==3):
+
+                f = open("test.txt", "ab")
+                while (True):
+                 f.write(bytes(op_code[4:]))
+                 ACK_packet = OBJ.request_file(file_path_on_server=file_name, pack=2,block1=op_code[2],block2=op_code[3])
+                 op_code, server = setup_sockets(server, ACK_packet)
+                 print(list(ACK_packet))
+                 pack_no = OBJ._parse_udp_packet(packet_bytes=op_code)
+                 print(op_code[2],op_code[3])
+                 if (pack_no == 5):
+                     print("Error")
+                 if (len(op_code) < 516):
+                     f.write(bytes(op_code[4:]))
+                     print("break")
+                     break
+                f.close()
+                client_socket.close()
+
+        elif pack_no==5 :
+            print("File Not Found on Server")
+
 
 
 def get_arg(param_index, default=None):
@@ -223,8 +277,8 @@ def main():
     # are provided. Feel free to modify them.
 
     ip_address = get_arg(1, "127.0.0.1")
-    operation = get_arg(2, "push")
-    file_name = get_arg(3, "test.txt")
+    operation = get_arg(2, "pull")
+    file_name = get_arg(3, "tssest.txt")
 
     # Modify this as needed.
     parse_user_input(ip_address, operation, file_name)
