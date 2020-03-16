@@ -1,22 +1,24 @@
-class socket_class:
-    import socket
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #intializing a UDP socket
-    server_address= ("127.0.0.1",69) # definig the address of the server
-    server_socket.bind(server_address) #allocating the server
-    print("[SERVER] Socket info:", server_socket)
-    print("[SERVER] Waiting...")
-    packet = server_socket.recvfrom(512)
-    data,client_address= packet
-    print("[SERVER] IN", data)
-
 import sys
 import os
 import enum
 
 
+def setup_sockets(address, packet):
+    import socket
+
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # intializing a UDP socket
+    client_socket.sendto(packet, address)
+    print("[CLIENT] Done!")
+    data, server = client_socket.recvfrom(600)
+    print("[CLIENT] in!")
+    print(server)
+    return list(data), server
+
+
+
 class TftpProcessor(object):
     """
-    Implements logic for a TFTP server.
+    Implements logic for a TFTP client.
     The input to this object is a received UDP packet,
     the output is the packets to be written to the socket.
     This class MUST NOT know anything about the existing sockets
@@ -41,6 +43,10 @@ class TftpProcessor(object):
         modify the existing values as necessary.
         """
         RRQ = 1
+        WRQ = 2
+        DATA = 3
+        ACK = 4
+        ERROR = 5
 
     def __init__(self):
         """
@@ -60,6 +66,7 @@ class TftpProcessor(object):
         # Add your logic here, after your logic is done,
         # add the packet to be sent to self.packet_buffer
         # feel free to remove this line
+
         print(f"Received a packet from {packet_source}")
         in_packet = self._parse_udp_packet(packet_data)
         out_packet = self._do_some_logic(in_packet)
@@ -73,12 +80,20 @@ class TftpProcessor(object):
         the type of the packet and extract other available
         information.
         """
+        return packet_bytes[1]
         pass
 
-    def _do_some_logic(self, input_packet):
+    def _do_some_logic(self, DATA_no, input_packet):
         """
         Example of a private function that does some logic.
         """
+        DATA_packet=bytearray()
+        DATA_packet.append(0)
+        DATA_packet.append(3)
+        DATA_packet.append(0)
+        DATA_packet.append(DATA_no)
+        DATA_packet += bytes(input_packet)
+        return DATA_packet
         pass
 
     def get_next_output_packet(self):
@@ -99,6 +114,41 @@ class TftpProcessor(object):
         """
         return len(self.packet_buffer) != 0
 
+    def request_file(self, file_path_on_server):
+        """
+        This method is only valid if you're implementing
+        a TFTP client, since the client requests or uploads
+        a file to/from a server, one of the inputs the client
+        accept is the file name. Remove this function if you're
+        implementing a server.
+        """
+        pass
+
+    def upload_file(self,file_path_on_server):
+        """
+        This method is only valid if you're implementing
+        a TFTP client, since the client requests or uploads
+        a file to/from a server, one of the inputs the client
+        accept is the file name. Remove this function if you're
+        implementing a server.
+        """
+
+        mode = "octet"
+        file = file_path_on_server.encode(encoding='UTF-8', errors='strict')
+        WRQ_packet = bytearray()
+        WRQ_packet.append(0)
+        WRQ_packet.append(2)
+        WRQ_packet += bytes(file)
+        WRQ_packet.append(0)
+        mod = mode.encode(encoding='UTF-8', errors='strict')
+        WRQ_packet += bytes(mod)
+        WRQ_packet.append(0)
+        return WRQ_packet
+        pass
+
+
+OBJ = TftpProcessor()
+
 
 def check_file_name():
     script_name = os.path.basename(__file__)
@@ -109,24 +159,32 @@ def check_file_name():
     pass
 
 
-def setup_sockets(address):
-    """
-    Socket logic MUST NOT be written in the TftpProcessor
-    class. It knows nothing about the sockets.
-    Feel free to delete this function.
-    """
-    # don't forget, the server's port is 69 (might require using sudo on Linux)
-    print(f"TFTP server started on on [{address}]...")
-    pass
+def parse_user_input(address, operation, file_name=None):
+    DATA_no=1
+    if operation == "push":
+        WRQ_packet=OBJ.upload_file(file_path_on_server=file_name)
+        op_code,server=setup_sockets((address, 69),WRQ_packet)
+        pack_no=OBJ._parse_udp_packet(packet_bytes=op_code)
+        print(f"Attempting to upload [{file_name}]...")
+        if(pack_no==4):
+            with open(file_name, "r") as f:
+              while True:
+                  chunk = bytearray(f.read(512).encode(encoding='UTF-8', errors='strict'))
+                  DATA_packet= OBJ._do_some_logic(DATA_no,chunk)
+                  print(list(DATA_packet))
+                  op_code,server = setup_sockets(server, DATA_packet)
+                  pack_no = OBJ._parse_udp_packet(packet_bytes=op_code)
+                  if not pack_no == 4:
+                        print("ERROR")
+                        break
+                  DATA_no=DATA_no+1
+                  if not chunk:
+                      break
 
-
-def do_socket_logic():
-    """
-    Example function for some helper logic, in case you
-    want to be tidy and avoid stuffing the main function.
-    Feel free to delete this function.
-    """
-    pass
+        pass
+    elif operation == "pull":
+        print(f"Attempting to download [{file_name}]...")
+        pass
 
 
 def get_arg(param_index, default=None):
@@ -161,9 +219,15 @@ def main():
     # This argument is required.
     # For a server, this means the IP that the server socket
     # will use.
-    # The IP of the server.
+    # The IP of the server, some default values
+    # are provided. Feel free to modify them.
+
     ip_address = get_arg(1, "127.0.0.1")
-    setup_sockets(ip_address)
+    operation = get_arg(2, "push")
+    file_name = get_arg(3, "test.txt")
+
+    # Modify this as needed.
+    parse_user_input(ip_address, operation, file_name)
 
 
 if __name__ == "__main__":
